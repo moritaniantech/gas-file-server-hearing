@@ -106,9 +106,10 @@ function div_createResponseSheets() {
       return;
     }
 
-    // AWS S3が選択されている場合は除外
+    // AWS S3が選択されている場合は除外シートに追加
     const migrationDest = row[DIV_COL_J_MIGRATION_DEST];
     if (migrationDest === 'AWS S3') {
+      excludedData.push(row);
       return;
     }
 

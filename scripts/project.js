@@ -99,23 +99,17 @@ function project_createResponseSheets() {
       confirmationPerson = PROJECT_UNKNOWN_SHEET_NAME;
     }
 
-    // (project) v8修正: G/H列 と J/K列 の「値」を入れ替え
+    // (project) 新しい列構成: A列のみ、C/D/E/F列、G/H列、回答者メールアドレス
+    // 注意: 元データシートの列インデックス（A=0, C=2, D=3, E=4, F=5, G=6, H=7）
     const newRow = [
-      row[PROJECT_COL_A_DIV1], // 0: A
-      row[PROJECT_COL_B_DIV2], // 1: B
-      row[PROJECT_COL_D_FOLDER_COUNT], // 2: C
-      row[PROJECT_COL_E_FILE_COUNT], // 3: D
-      row[PROJECT_COL_F_DATA_SIZE], // 4: E
-      row[PROJECT_COL_G_LAST_UPDATED], // 5: F
-      row[PROJECT_COL_J_MIGRATION_DEST], // 6: G (★元データJ)
-      row[PROJECT_COL_K_MIGRATION_METHOD], // 7: H (★元データK)
-      '', // 8: I
-      row[PROJECT_COL_H_HONBU], // 9: J (★元データH)
-      row[PROJECT_COL_I_BUSHITSU], // 10: K (★元データI)
-      '', // 11: L
-      false, // 12: M
-      false, // 13: N
-      '' // 14: O
+      row[0], // 0: projectフォルダ（A列）
+      row[2], // 1: フォルダ数（C列）
+      row[3], // 2: ファイル数（D列）
+      row[4], // 3: データ容量/GB（E列）
+      row[5], // 4: 最終更新日（F列）
+      '', // 5: 回答者メールアドレス（ユーザー記入）
+      row[6], // 6: 移行先（G列）
+      row[7] // 7: 移行方法（H列）
     ];
 
     if (!dataByPerson[confirmationPerson]) {
@@ -126,20 +120,18 @@ function project_createResponseSheets() {
   
   Logger.log(`(project) データ振り分け完了。確認先: ${Object.keys(dataByPerson).length}件、除外: ${excludedData.length}件`);
 
-  // --- (project) 回答用シートのヘッダー定義 (v8) ---
+  // --- (project) 回答用シートのヘッダー定義 ---
   const outputHeaders = [
-    'projectフォルダ_1階層目', 'projectフォルダ 2階層目', 'フォルダ数', 'ファイル数', 'データ容量/GB',
-    '最終更新日', '対象本部 ※推測込', '対象部室 ※ 推測込', '回答者メールアドレス', '移行先',
-    '移行方法', '共有ドライブ名', '個人情報有無', '自動化有無 ※スクリプトやRPAなど', 'その他'
+    'projectフォルダ', 'フォルダ数', 'ファイル数', 'データ容量 / GB', '最終更新日',
+    '回答者メールアドレス', '移行先', '移行方法'
   ];
-  // ユーザーが入力する列 (v8)
-  const userInputHeaderIndices = [8, 9, 10, 11, 12, 13, 14];
+  // ユーザーが入力する列（回答者メールアドレスのみ）
+  const userInputHeaderIndices = [5];
 
   // --- (project) データバリデーションルール ---
   const rules = {
     migrationRule: SpreadsheetApp.newDataValidation().requireValueInList(['Google Drive', 'AWS S3', '別テナント', '不要'], true).build(),
-    methodRule: SpreadsheetApp.newDataValidation().requireValueInList(['自対応', 'hatakan依頼', '不要'], true).build(),
-    checkboxRule: SpreadsheetApp.newDataValidation().requireCheckbox().build()
+    methodRule: SpreadsheetApp.newDataValidation().requireValueInList(['自対応', 'hatakan依頼', '不要'], true).build()
   };
 
   // --- (project) URL一覧シートの準備 ---
@@ -172,11 +164,14 @@ function project_createResponseSheets() {
     const fileName = PROJECT_EXCLUDED_SHEET_NAME;
     Logger.log(`(project) シート作成開始: ${fileName} (${excludedData.length}件)`);
     const mappedExcludedData = excludedData.map(row => [
-      row[PROJECT_COL_A_DIV1], row[PROJECT_COL_B_DIV2], row[PROJECT_COL_D_FOLDER_COUNT],
-      row[PROJECT_COL_E_FILE_COUNT], row[PROJECT_COL_F_DATA_SIZE], row[PROJECT_COL_G_LAST_UPDATED],
-      row[PROJECT_COL_J_MIGRATION_DEST], row[PROJECT_COL_K_MIGRATION_METHOD], '',
-      row[PROJECT_COL_H_HONBU], row[PROJECT_COL_I_BUSHITSU],
-      '', false, false, ''
+      row[0], // projectフォルダ（A列）
+      row[2], // フォルダ数（C列）
+      row[3], // ファイル数（D列）
+      row[4], // データ容量/GB（E列）
+      row[5], // 最終更新日（F列）
+      '', // 回答者メールアドレス（ユーザー記入）
+      row[6], // 移行先（G列）
+      row[7] // 移行方法（H列）
     ]);
     
     try {
@@ -233,11 +228,9 @@ function project_createAndFormatSheet(fileName, headers, dataRows, folder, highl
       dataRange.setValues(dataRows);
       dataRange.setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID); // 細線
 
-      // (project) データバリデーション設定 (v8)
-      sheet.getRange(2, 10, numRows, 1).setDataValidation(rules.migrationRule); // J列
-      sheet.getRange(2, 11, numRows, 1).setDataValidation(rules.methodRule); // K列
-      sheet.getRange(2, 13, numRows, 1).setDataValidation(rules.checkboxRule); // M列
-      sheet.getRange(2, 14, numRows, 1).setDataValidation(rules.checkboxRule); // N列
+      // (project) データバリデーション設定
+      sheet.getRange(2, 7, numRows, 1).setDataValidation(rules.migrationRule); // G列（移行先）
+      sheet.getRange(2, 8, numRows, 1).setDataValidation(rules.methodRule); // H列（移行方法）
 
     } catch (e) {
       Logger.log(`> (project) ${fileName}: データ書き込みまたはフォーマット中にエラー: ${e.message}`);
