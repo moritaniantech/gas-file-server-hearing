@@ -1,0 +1,9 @@
+**/**
+!scripts/**
+!appsscript.json
+*.md
+.git/**
+.gitignore
+.claspignore
+documents/**
+
