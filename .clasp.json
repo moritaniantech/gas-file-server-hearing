@@ -11,9 +11,6 @@
   "jsonExtensions": [
     ".json"
   ],
-  "filePushOrder": [
-    "scripts/div.gs",
-    "scripts/project.gs"
-  ],
+  "filePushOrder": [],
   "skipSubdirectories": false
 }
