@@ -1,6 +1,7 @@
 **/**
 !scripts/**
 !appsscript.json
+scripts/コード.js
 *.md
 .git/**
 .gitignore
