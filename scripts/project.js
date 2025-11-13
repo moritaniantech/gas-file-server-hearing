@@ -210,11 +210,19 @@ function project_createResponseSheets() {
     const selectedRow = activeRows.length > 0 ? activeRows[0] : rows[0];
     
     // 回答シートの列構成: A, C, D, E, F列 + 他フォルダ管理者 + ユーザー入力列
+    // フォルダ数とファイル数を3桁区切りに変換
+    const formatNumber = (value) => {
+      if (value === null || value === undefined || value === '') return value;
+      const num = typeof value === 'number' ? value : parseFloat(value);
+      if (isNaN(num)) return value;
+      return num.toLocaleString('ja-JP');
+    };
+    
     const newRow = [
       selectedRow[PROJECT_COL_A_FOLDER_NAME],      // 0: projectフォルダ（A列）
-      selectedRow[PROJECT_COL_C_FOLDER_COUNT],     // 1: フォルダ数（C列）
-      selectedRow[PROJECT_COL_D_FILE_COUNT],       // 2: ファイル数（D列）
-      selectedRow[PROJECT_COL_E_DATA_SIZE],        // 3: データ容量/GB（E列）
+      formatNumber(selectedRow[PROJECT_COL_C_FOLDER_COUNT]),     // 1: フォルダ数（C列 - 3桁区切り）
+      formatNumber(selectedRow[PROJECT_COL_D_FILE_COUNT]),       // 2: ファイル数（D列 - 3桁区切り）
+      selectedRow[PROJECT_COL_E_DATA_SIZE],        // 3: データサイズ（E列）
       selectedRow[PROJECT_COL_F_LAST_UPDATED],     // 4: 最終更新日（F列）
       otherManagersStr,                             // 5: 他フォルダ管理者
       '',                                           // 6: 回答者メールアドレス（ユーザー記入）
@@ -249,7 +257,7 @@ function project_createResponseSheets() {
     'projectフォルダ',           // 0
     'フォルダ数',                // 1
     'ファイル数',                // 2
-    'データ容量 / GB',           // 3
+    'データサイズ',              // 3
     '最終更新日',                // 4
     '他フォルダ管理者',          // 5
     '回答者メールアドレス',       // 6

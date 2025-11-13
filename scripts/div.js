@@ -320,11 +320,19 @@ function div_createResponseSheets() {
     }
 
     // (div) v8修正: G/H列 と J/K列 の「値」を入れ替え
+    // フォルダ数とファイル数を3桁区切りに変換
+    const formatNumber = (value) => {
+      if (value === null || value === undefined || value === '') return value;
+      const num = typeof value === 'number' ? value : parseFloat(value);
+      if (isNaN(num)) return value;
+      return num.toLocaleString('ja-JP');
+    };
+    
     const newRow = [
       row[DIV_COL_A_DIV1], // 0: A
       row[DIV_COL_B_DIV2], // 1: B
-      row[DIV_COL_D_FOLDER_COUNT], // 2: C
-      row[DIV_COL_E_FILE_COUNT], // 3: D
+      formatNumber(row[DIV_COL_D_FOLDER_COUNT]), // 2: C (フォルダ数 - 3桁区切り)
+      formatNumber(row[DIV_COL_E_FILE_COUNT]), // 3: D (ファイル数 - 3桁区切り)
       row[DIV_COL_F_DATA_SIZE], // 4: E
       row[DIV_COL_G_LAST_UPDATED], // 5: F
       row[DIV_COL_J_MIGRATION_DEST], // 6: G (★元データJ)
@@ -348,7 +356,7 @@ function div_createResponseSheets() {
 
   // --- (div) 回答用シートのヘッダー定義 (v8) ---
   const outputHeaders = [
-    'divフォルダ_1階層目', 'divフォルダ 2階層目', 'フォルダ数', 'ファイル数', 'データ容量/GB',
+    'divフォルダ_1階層目', 'divフォルダ 2階層目', 'フォルダ数', 'ファイル数', 'データサイズ',
     '最終更新日', '対象本部 ※推測込', '対象部室 ※ 推測込', '回答者メールアドレス', '移行先',
     '移行方法', '共有ドライブ名', '個人情報有無', '自動化有無 ※スクリプトやRPAなど', 'その他'
   ];
@@ -390,9 +398,16 @@ function div_createResponseSheets() {
   if (excludedData.length > 0) {
     const fileName = DIV_EXCLUDED_SHEET_NAME;
     Logger.log(`(div) シート作成開始: ${fileName} (${excludedData.length}件)`);
+    // フォルダ数とファイル数を3桁区切りに変換する関数
+    const formatNumber = (value) => {
+      if (value === null || value === undefined || value === '') return value;
+      const num = typeof value === 'number' ? value : parseFloat(value);
+      if (isNaN(num)) return value;
+      return num.toLocaleString('ja-JP');
+    };
     const mappedExcludedData = excludedData.map(row => [
-      row[DIV_COL_A_DIV1], row[DIV_COL_B_DIV2], row[DIV_COL_D_FOLDER_COUNT],
-      row[DIV_COL_E_FILE_COUNT], row[DIV_COL_F_DATA_SIZE], row[DIV_COL_G_LAST_UPDATED],
+      row[DIV_COL_A_DIV1], row[DIV_COL_B_DIV2], formatNumber(row[DIV_COL_D_FOLDER_COUNT]),
+      formatNumber(row[DIV_COL_E_FILE_COUNT]), row[DIV_COL_F_DATA_SIZE], row[DIV_COL_G_LAST_UPDATED],
       row[DIV_COL_J_MIGRATION_DEST], row[DIV_COL_K_MIGRATION_METHOD], '',
       row[DIV_COL_H_HONBU], row[DIV_COL_I_BUSHITSU],
       '', false, false, ''
