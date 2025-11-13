@@ -9,28 +9,35 @@
 // project フォルダ用 設定
 // ===================================================
 
-/** (project) 元データが記載されているシート名 */
+/** (project) 元データが記載されているシート名 (ファイルリストから '（新）project-2' と推定) */
 const PROJECT_SOURCE_SHEET_NAME = '（新）project-2';
 
 /** (project) 作成したシートのURL一覧を記載するシート名 */
 const PROJECT_SUMMARY_SHEET_NAME = 'project回答シートURL一覧';
 
-/** (project) 確認先不明の場合のファイル名 */
-const PROJECT_UNKNOWN_SHEET_NAME = '確認先不明';
+/** (project) ファイル数が0で除外されたデータをまとめるスプレッドシートのファイル名 */
+const PROJECT_EXCLUDED_SHEET_NAME = 'project確認先を除外';
+
+/** (project) L列・M列が両方 '×' だった場合のファイル名 */
+const PROJECT_UNKNOWN_SHEET_NAME = 'project不明';
 
 /** (project)【重要】回答用スプレッドシートを保存するGoogle DriveフォルダのID */
 const PROJECT_DESTINATION_FOLDER_ID = '1OjgFtdJYA3kyZm95ogtiiYAkU7zLL8wM'; // ← ★★★ 設定してください ★★★
 
-// (project) (新)project-2シートの列インデックス（0ベース）
-const PROJECT_COL_A_FOLDER_NAME = 0;      // A列: projectフォルダ名
-const PROJECT_COL_B_STATUS = 1;          // B列: ステータス
-const PROJECT_COL_C_FOLDER_COUNT = 2;     // C列: フォルダ数
-const PROJECT_COL_D_FILE_COUNT = 3;       // D列: ファイル数
-const PROJECT_COL_E_DATA_SIZE = 4;        // E列: データ容量/GB
-const PROJECT_COL_F_LAST_UPDATED = 5;     // F列: 最終更新日
-const PROJECT_COL_G_MIGRATION_DEST = 6;   // G列: 移行先
-const PROJECT_COL_H_MIGRATION_METHOD = 7; // H列: 移行方法
-const PROJECT_COL_I_MANAGER = 8;          // I列: 管理者
+// (project) (新)project-2シートの列インデックス (divと同じと想定)
+const PROJECT_COL_A_DIV1 = 0;
+const PROJECT_COL_B_DIV2 = 1;
+const PROJECT_COL_D_FOLDER_COUNT = 3;
+const PROJECT_COL_E_FILE_COUNT = 4;
+const PROJECT_COL_F_DATA_SIZE = 5;
+const PROJECT_COL_G_LAST_UPDATED = 6;
+const PROJECT_COL_H_HONBU = 7;
+const PROJECT_COL_I_BUSHITSU = 8;
+const PROJECT_COL_J_MIGRATION_DEST = 9;
+const PROJECT_COL_K_MIGRATION_METHOD = 10;
+const PROJECT_COL_L_HONBUCHO = 11;
+const PROJECT_COL_M_BUSHITSUCHO = 12;
+
 
 // ===================================================
 // project フォルダ用 スクリプト
@@ -60,184 +67,79 @@ function project_createResponseSheets() {
     return;
   }
 
-  // 「（新）project-2」シートは4行目が列名、5行目からレコードが開始
-  const lastRow = sourceSheet.getLastRow();
-  const lastCol = sourceSheet.getLastColumn();
-  
-  // 4行目を列名として取得
-  const headers = sourceSheet.getRange(4, 1, 1, lastCol).getValues()[0];
-  
-  // 5行目以降をデータとして取得
-  let data = [];
-  if (lastRow >= 5) {
-    data = sourceSheet.getRange(5, 1, lastRow - 4, lastCol).getValues();
-  }
+  const data = sourceSheet.getDataRange().getValues();
+  const headers = data.shift(); // ヘッダー行を取得
 
-  Logger.log(`(project) 元データ ${data.length}行の処理を開始します。`);
-  
-  // デバッグ: 最初の3行のデータを確認
-  if (data.length > 0) {
-    Logger.log(`(project) デバッグ: 最初の行のデータ`);
-    Logger.log(`  A列(フォルダ名): "${data[0][PROJECT_COL_A_FOLDER_NAME]}" (型: ${typeof data[0][PROJECT_COL_A_FOLDER_NAME]})`);
-    Logger.log(`  B列(ステータス): "${data[0][PROJECT_COL_B_STATUS]}" (型: ${typeof data[0][PROJECT_COL_B_STATUS]})`);
-    Logger.log(`  I列(管理者): "${data[0][PROJECT_COL_I_MANAGER]}" (型: ${typeof data[0][PROJECT_COL_I_MANAGER]})`);
-  }
-
-  // --- (project) データをA列（projectフォルダ名）でグループ化 ---
-  const dataByFolder = {};
-  data.forEach((row, rowIndex) => {
-    // 空行をスキップ
-    if (row.join('').trim().length === 0) return;
-    
-    const folderName = row[PROJECT_COL_A_FOLDER_NAME];
-    if (!folderName || folderName.toString().trim().length === 0) return;
-
-    const folderNameStr = folderName.toString().trim();
-    if (!dataByFolder[folderNameStr]) {
-      dataByFolder[folderNameStr] = [];
-    }
-    dataByFolder[folderNameStr].push(row);
-  });
-
-  Logger.log(`(project) フォルダ数: ${Object.keys(dataByFolder).length}件`);
-
-  // --- (project) 各フォルダごとに確認先を決定 ---
-  // 要件: 
-  // 1. I列の管理者に「×」が入力されている場合は、確認先を「確認先不明」
-  // 2. I列の管理者に「×」以外が入力されている場合:
-  //    - A列に同一の名称が複数行に記載されている場合、B列「ステータス」が「在職」と記入されている行から1件確認先を絞り出す
-  //    - B列がすべて「在職」以外の場合、確認先不明として分類
-  const folderConfirmationPerson = {};
-  
-  for (const folderName in dataByFolder) {
-    const rows = dataByFolder[folderName];
-    
-    // B列（ステータス）が「在職」の行を探す（型変換とtrimを考慮）
-    const activeRows = rows.filter(row => {
-      const status = row[PROJECT_COL_B_STATUS];
-      if (!status) return false;
-      const statusStr = status.toString().trim();
-      return statusStr === '在職';
-    });
-    
-    Logger.log(`(project) フォルダ「${folderName}」: 全行数=${rows.length}, 在職行数=${activeRows.length}`);
-    
-    let confirmationPerson = PROJECT_UNKNOWN_SHEET_NAME;
-    
-    if (activeRows.length > 0) {
-      // 「在職」の行がある場合、その中からI列（管理者）の値を確認先として選ぶ
-      // I列が「×」の場合は確認先不明
-      // I列が「×」以外の場合は、その値を確認先とする（最初の「在職」行のI列の値を確認先とする）
-      for (let i = 0; i < activeRows.length; i++) {
-        const manager = activeRows[i][PROJECT_COL_I_MANAGER];
-        if (manager) {
-          const managerStr = manager.toString().trim();
-          Logger.log(`(project) フォルダ「${folderName}」: 在職行[${i}]のI列値="${managerStr}"`);
-          if (managerStr !== '×' && managerStr.length > 0) {
-            confirmationPerson = managerStr;
-            Logger.log(`(project) フォルダ「${folderName}」: 確認先を「${confirmationPerson}」に決定`);
-            break;
-          }
-        }
-      }
-      
-      if (confirmationPerson === PROJECT_UNKNOWN_SHEET_NAME) {
-        Logger.log(`(project) フォルダ「${folderName}」: 在職行のI列がすべて「×」または空のため、確認先不明`);
-      }
-    } else {
-      // B列がすべて「在職」以外の場合、確認先不明
-      Logger.log(`(project) フォルダ「${folderName}」: 在職行がないため、確認先不明`);
-    }
-    
-    folderConfirmationPerson[folderName] = confirmationPerson;
-  }
-
-  // --- (project) 確認先ごとにデータを振り分け、他フォルダ管理者を計算 ---
   const dataByPerson = {};
+  const excludedData = [];
   
-  for (const folderName in dataByFolder) {
-    const rows = dataByFolder[folderName];
-    const confirmationPerson = folderConfirmationPerson[folderName];
-    
-    // 他フォルダ管理者の計算：
-    // 「（新）project−2」のA列に同一のフォルダ名が記述されており、かつB列が「在職」のケースがあれば、
-    // I列の値をすべて「,」で繋げて転記する（確認先として抽出された方の氏名は除外）
-    const activeRows = rows.filter(row => {
-      const status = row[PROJECT_COL_B_STATUS];
-      if (!status) return false;
-      const statusStr = status.toString().trim();
-      return statusStr === '在職';
-    });
-    const otherManagers = [];
-    activeRows.forEach(row => {
-      const manager = row[PROJECT_COL_I_MANAGER];
-      if (manager) {
-        const managerStr = manager.toString().trim();
-        if (managerStr !== '×' && managerStr.length > 0) {
-          // 確認先として抽出された方の氏名は除外
-          if (managerStr !== confirmationPerson && otherManagers.indexOf(managerStr) === -1) {
-            otherManagers.push(managerStr);
-          }
-        }
-      }
-    });
-    const otherManagersStr = otherManagers.join(',');
+  Logger.log(`(project) 元データ ${data.length}行の処理を開始します。`);
 
-    // 各フォルダの各行を確認先ごとに振り分け
-    rows.forEach(row => {
-      // 回答シートの列構成: A, C, D, E, F列 + 他フォルダ管理者 + ユーザー入力列
-      const newRow = [
-        row[PROJECT_COL_A_FOLDER_NAME],      // 0: projectフォルダ（A列）
-        row[PROJECT_COL_C_FOLDER_COUNT],     // 1: フォルダ数（C列）
-        row[PROJECT_COL_D_FILE_COUNT],       // 2: ファイル数（D列）
-        row[PROJECT_COL_E_DATA_SIZE],        // 3: データ容量/GB（E列）
-        row[PROJECT_COL_F_LAST_UPDATED],     // 4: 最終更新日（F列）
-        otherManagersStr,                     // 5: 他フォルダ管理者
-        '',                                   // 6: 回答者メールアドレス（ユーザー記入）
-        row[PROJECT_COL_G_MIGRATION_DEST] || '',    // 7: 移行先（G列）
-        row[PROJECT_COL_H_MIGRATION_METHOD] || '',  // 8: 移行方法（H列）
-        '',                                   // 9: 共有ドライブ名（ユーザー記入）
-        false,                                // 10: 個人情報有無（チェックボックス）
-        false,                                // 11: 自動化有無（チェックボックス）
-        ''                                    // 12: その他（ユーザー記入）
-      ];
+  // --- (project) データの振り分け ---
+  data.forEach((row, index) => {
+    if (row.join('').length === 0) return;
+    const fileCount = row[PROJECT_COL_E_FILE_COUNT];
 
-      if (!dataByPerson[confirmationPerson]) {
-        dataByPerson[confirmationPerson] = [];
-      }
-      dataByPerson[confirmationPerson].push(newRow);
-    });
-  }
+    if (fileCount === 0 || fileCount === '0') {
+      excludedData.push(row);
+      return;
+    }
+
+    const personL = row[PROJECT_COL_L_HONBUCHO];
+    const personM = row[PROJECT_COL_M_BUSHITSUCHO];
+    let confirmationPerson = PROJECT_UNKNOWN_SHEET_NAME;
+
+    if (personL && personL !== '×' && personM === '×') {
+      confirmationPerson = personL;
+    } else if (personL === '×' && personM && personM !== '×') {
+      confirmationPerson = personM;
+    } else if (personL && personL !== '×' && personM && personM !== '×') {
+      confirmationPerson = personM;
+    } else if (personL === '×' && personM === '×') {
+      confirmationPerson = PROJECT_UNKNOWN_SHEET_NAME;
+    }
+
+    // (project) v8修正: G/H列 と J/K列 の「値」を入れ替え
+    const newRow = [
+      row[PROJECT_COL_A_DIV1], // 0: A
+      row[PROJECT_COL_B_DIV2], // 1: B
+      row[PROJECT_COL_D_FOLDER_COUNT], // 2: C
+      row[PROJECT_COL_E_FILE_COUNT], // 3: D
+      row[PROJECT_COL_F_DATA_SIZE], // 4: E
+      row[PROJECT_COL_G_LAST_UPDATED], // 5: F
+      row[PROJECT_COL_J_MIGRATION_DEST], // 6: G (★元データJ)
+      row[PROJECT_COL_K_MIGRATION_METHOD], // 7: H (★元データK)
+      '', // 8: I
+      row[PROJECT_COL_H_HONBU], // 9: J (★元データH)
+      row[PROJECT_COL_I_BUSHITSU], // 10: K (★元データI)
+      '', // 11: L
+      false, // 12: M
+      false, // 13: N
+      '' // 14: O
+    ];
+
+    if (!dataByPerson[confirmationPerson]) {
+      dataByPerson[confirmationPerson] = [];
+    }
+    dataByPerson[confirmationPerson].push(newRow);
+  });
   
-  Logger.log(`(project) データ振り分け完了。確認先: ${Object.keys(dataByPerson).length}件`);
-  for (const person in dataByPerson) {
-    Logger.log(`(project) 確認先「${person}」: ${dataByPerson[person].length}件`);
-  }
+  Logger.log(`(project) データ振り分け完了。確認先: ${Object.keys(dataByPerson).length}件、除外: ${excludedData.length}件`);
 
-  // --- (project) 回答用シートのヘッダー定義 ---
+  // --- (project) 回答用シートのヘッダー定義 (v8) ---
   const outputHeaders = [
-    'projectフォルダ',           // 0
-    'フォルダ数',                // 1
-    'ファイル数',                // 2
-    'データ容量 / GB',           // 3
-    '最終更新日',                // 4
-    '他フォルダ管理者',          // 5
-    '回答者メールアドレス',       // 6
-    '移行先',                    // 7
-    '移行方法',                  // 8
-    '共有ドライブ名',            // 9
-    '個人情報有無',              // 10
-    '自動化有無',                // 11
-    'その他'                     // 12
+    'projectフォルダ_1階層目', 'projectフォルダ 2階層目', 'フォルダ数', 'ファイル数', 'データ容量/GB',
+    '最終更新日', '対象本部 ※推測込', '対象部室 ※ 推測込', '回答者メールアドレス', '移行先',
+    '移行方法', '共有ドライブ名', '個人情報有無', '自動化有無 ※スクリプトやRPAなど', 'その他'
   ];
-  
-  // ユーザーが回答を入力する列のタイトル（色を変えるため）
-  const userInputHeaderIndices = [6, 7, 8, 9, 10, 11, 12]; // 回答者メールアドレス、移行先、移行方法、共有ドライブ名、個人情報有無、自動化有無、その他
+  // ユーザーが入力する列 (v8)
+  const userInputHeaderIndices = [8, 9, 10, 11, 12, 13, 14];
 
   // --- (project) データバリデーションルール ---
   const rules = {
-    migrationRule: SpreadsheetApp.newDataValidation().requireValueInList(['Googleドライブ', 'Googleドライブ_別テナント', 'AWS S3', '不要'], true).build(),
-    methodRule: SpreadsheetApp.newDataValidation().requireValueInList(['自対応', 'hatakan依頼', '不要'], true).build()
+    migrationRule: SpreadsheetApp.newDataValidation().requireValueInList(['Google Drive', 'AWS S3', '別テナント', '不要'], true).build(),
+    methodRule: SpreadsheetApp.newDataValidation().requireValueInList(['自対応', 'hatakan依頼', '不要'], true).build(),
+    checkboxRule: SpreadsheetApp.newDataValidation().requireCheckbox().build()
   };
 
   // --- (project) URL一覧シートの準備 ---
@@ -251,16 +153,39 @@ function project_createResponseSheets() {
 
   // --- (project) 確認先ごとにスプレッドシートを作成 ---
   for (const person in dataByPerson) {
-    const fileName = `(project) ${person}`;
+    const fileName = `(project) ${person}`; // ファイル名に(project)を追加
     const rows = dataByPerson[person];
     Logger.log(`(project) シート作成開始: ${fileName} (${rows.length}件)`);
     try {
+      // 内部ヘルパー関数を呼び出す
       const result = project_createAndFormatSheet(fileName, outputHeaders, rows, destinationFolder, userInputHeaderIndices, rules);
       summaryData.push([person, result.url, result.rowCount]);
       Logger.log(`(project) 作成完了: ${person} (URL: ${result.url})`);
     } catch (e) {
       Logger.log(`(project) エラー: ${person} のシート作成に失敗しました。 ${e.message}`);
       summaryData.push([person, `作成失敗: ${e.message}`, 0]);
+    }
+  }
+
+  // --- (project) 「除外」シートの作成 ---
+  if (excludedData.length > 0) {
+    const fileName = PROJECT_EXCLUDED_SHEET_NAME;
+    Logger.log(`(project) シート作成開始: ${fileName} (${excludedData.length}件)`);
+    const mappedExcludedData = excludedData.map(row => [
+      row[PROJECT_COL_A_DIV1], row[PROJECT_COL_B_DIV2], row[PROJECT_COL_D_FOLDER_COUNT],
+      row[PROJECT_COL_E_FILE_COUNT], row[PROJECT_COL_F_DATA_SIZE], row[PROJECT_COL_G_LAST_UPDATED],
+      row[PROJECT_COL_J_MIGRATION_DEST], row[PROJECT_COL_K_MIGRATION_METHOD], '',
+      row[PROJECT_COL_H_HONBU], row[PROJECT_COL_I_BUSHITSU],
+      '', false, false, ''
+    ]);
+    
+    try {
+      const result = project_createAndFormatSheet(fileName, outputHeaders, mappedExcludedData, destinationFolder, userInputHeaderIndices, rules);
+      summaryData.push([fileName, result.url, result.rowCount]);
+      Logger.log(`(project) 作成完了: ${fileName} (URL: ${result.url})`);
+    } catch (e) {
+      Logger.log(`(project) エラー: ${fileName} のシート作成に失敗しました。 ${e.message}`);
+      summaryData.push([fileName, `作成失敗: ${e.message}`, 0]);
     }
   }
 
@@ -284,7 +209,6 @@ function project_createAndFormatSheet(fileName, headers, dataRows, folder, highl
   const numRows = dataRows.length;
   const numCols = headers.length;
 
-  // 不要な行と列を削除
   if (sheet.getMaxRows() > numRows + 1) {
     sheet.deleteRows(numRows + 2, sheet.getMaxRows() - (numRows + 1));
   }
@@ -292,12 +216,12 @@ function project_createAndFormatSheet(fileName, headers, dataRows, folder, highl
     sheet.deleteColumns(numCols + 1, sheet.getMaxColumns() - numCols);
   }
 
-  // ヘッダー行の設定
+  // (グリッド線非表示はエラーのため削除)
+
   const headerRange = sheet.getRange(1, 1, 1, numCols);
   headerRange.setValues([headers]);
   headerRange.setBackground('#d9d9d9').setFontWeight('bold').setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
 
-  // ユーザーが回答を入力する列のタイトルを他のタイトルと色を変える
   highlightIndices.forEach(colIndex => {
     sheet.getRange(1, colIndex + 1).setBackground('#c9daf8');
   });
@@ -307,23 +231,16 @@ function project_createAndFormatSheet(fileName, headers, dataRows, folder, highl
     try {
       const dataRange = sheet.getRange(2, 1, numRows, numCols);
       dataRange.setValues(dataRows);
-      dataRange.setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
+      dataRange.setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID); // 細線
 
-      // データバリデーション設定
-      // 移行先（8列目 = インデックス7）
-      sheet.getRange(2, 8, numRows, 1).setDataValidation(rules.migrationRule);
-      // 移行方法（9列目 = インデックス8）
-      sheet.getRange(2, 9, numRows, 1).setDataValidation(rules.methodRule);
-      
-      // チェックボックス設定
-      // 個人情報有無（11列目 = インデックス10）
-      sheet.getRange(2, 11, numRows, 1).insertCheckboxes();
-      // 自動化有無（12列目 = インデックス11）
-      sheet.getRange(2, 12, numRows, 1).insertCheckboxes();
+      // (project) データバリデーション設定 (v8)
+      sheet.getRange(2, 10, numRows, 1).setDataValidation(rules.migrationRule); // J列
+      sheet.getRange(2, 11, numRows, 1).setDataValidation(rules.methodRule); // K列
+      sheet.getRange(2, 13, numRows, 1).setDataValidation(rules.checkboxRule); // M列
+      sheet.getRange(2, 14, numRows, 1).setDataValidation(rules.checkboxRule); // N列
 
     } catch (e) {
       Logger.log(`> (project) ${fileName}: データ書き込みまたはフォーマット中にエラー: ${e.message}`);
-      throw e;
     }
   } else {
     Logger.log(`> (project) ${fileName}: データ件数が0のため、スキップしました。`);
@@ -357,7 +274,7 @@ function project_mergeResponseSheets() {
   for (const row of urlData) {
     const personName = row[0];
     const url = row[1];
-    if (!url || !url.toString().startsWith('http')) {
+    if (!url || !url.startsWith('http')) {
       Logger.log(`(project) スキップ: ${personName} (無効なURL)`);
       continue;
     }
@@ -373,7 +290,7 @@ function project_mergeResponseSheets() {
         mergedData.push(headers);
         headersSet = true;
       } else {
-        values.shift(); // ヘッダー行をスキップ
+        values.shift();
       }
 
       values.forEach(dataRow => {
