@@ -106,6 +106,13 @@ function div_createResponseSheets() {
       return;
     }
 
+    // AWS S3が選択されている場合は除外シートに追加
+    const migrationDest = row[DIV_COL_J_MIGRATION_DEST];
+    if (migrationDest === 'AWS S3') {
+      excludedData.push(row);
+      return;
+    }
+
     const personL = row[DIV_COL_L_HONBUCHO];
     const personM = row[DIV_COL_M_BUSHITSUCHO];
     let confirmationPerson = DIV_UNKNOWN_SHEET_NAME;
@@ -157,7 +164,7 @@ function div_createResponseSheets() {
 
   // --- (div) データバリデーションルール ---
   const rules = {
-    migrationRule: SpreadsheetApp.newDataValidation().requireValueInList(['Google Drive', 'AWS S3', '別テナント', '不要'], true).build(),
+    migrationRule: SpreadsheetApp.newDataValidation().requireValueInList(['Googleドライブ', 'AWS S3', '別テナント', '不要'], true).build(),
     methodRule: SpreadsheetApp.newDataValidation().requireValueInList(['自対応', 'hatakan依頼', '不要'], true).build(),
     checkboxRule: SpreadsheetApp.newDataValidation().requireCheckbox().build()
   };
@@ -266,8 +273,34 @@ function div_createAndFormatSheet(fileName, headers, dataRows, folder, highlight
     Logger.log(`> (div) ${fileName}: データ件数が0のため、スキップしました。`);
   }
 
+  // 列幅の調整（列名と値の両方を考慮）
   try {
     sheet.autoResizeColumns(1, numCols);
+    SpreadsheetApp.flush(); // 自動調整を確実に反映
+    
+    // 各列の内容を確認して、必要に応じて列幅を調整
+    for (let col = 1; col <= numCols; col++) {
+      const headerValue = headers[col - 1];
+      const headerWidth = headerValue ? headerValue.toString().length * 1.2 : 10;
+      
+      // データ行の最大幅を確認
+      let maxDataWidth = 0;
+      if (numRows > 0) {
+        for (let row = 2; row <= numRows + 1; row++) {
+          const cellValue = sheet.getRange(row, col).getValue();
+          if (cellValue) {
+            const cellWidth = cellValue.toString().length * 1.1;
+            if (cellWidth > maxDataWidth) {
+              maxDataWidth = cellWidth;
+            }
+          }
+        }
+      }
+      
+      // ヘッダーとデータの大きい方に余裕を持たせて設定
+      const finalWidth = Math.max(headerWidth, maxDataWidth, 10) + 2;
+      sheet.setColumnWidth(col, Math.min(finalWidth, 300)); // 最大300ピクセル
+    }
   } catch (e) {
     Logger.log(`> (div) ${fileName}: 列幅の自動調整に失敗しました。 ${e.message}`);
   }

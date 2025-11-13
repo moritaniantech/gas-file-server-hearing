@@ -7,4 +7,6 @@ scripts/コード.js
 .gitignore
 .claspignore
 documents/**
+.DS_Store
+**/.DS_Store
 
