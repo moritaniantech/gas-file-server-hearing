@@ -68,6 +68,14 @@ const DIV_COL_M_BUSHITSUCHO = 12;
  * (div) メイン処理1: (新)divシートを読み込み、確認先ごとにスプレッドシートを分割作成します。
  */
 function div_createResponseSheets() {
+  // ユーザー認証チェック
+  const allowedUser = 'ryosuke.morita.ts@mixi.co.jp';
+  const currentUser = Session.getActiveUser().getEmail();
+  if (currentUser !== allowedUser) {
+    SpreadsheetApp.getUi().alert('エラー (div)', `このスクリプトは ${allowedUser} のみが実行できます。\n現在のユーザー: ${currentUser}`, SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
   if (DIV_DESTINATION_FOLDER_ID === 'YOUR_FOLDER_ID_HERE_FOR_DIV') {
     SpreadsheetApp.getUi().alert('スクリプトエラー (div)', 'DIV_DESTINATION_FOLDER_IDが設定されていません。', SpreadsheetApp.getUi().ButtonSet.OK);
     return;
@@ -340,6 +348,7 @@ function div_mergeResponseSheets() {
       if (!headersSet) {
         headers = values.shift();
         headers.unshift('確認先');
+        headers.push('参照元URL');
         mergedData.push(headers);
         headersSet = true;
       } else {
@@ -348,6 +357,7 @@ function div_mergeResponseSheets() {
 
       values.forEach(dataRow => {
         dataRow.unshift(personName);
+        dataRow.push(url);
         mergedData.push(dataRow);
       });
       Logger.log(`(div) マージ完了: ${personName}`);
@@ -358,6 +368,7 @@ function div_mergeResponseSheets() {
         const errorRow = new Array(headers.length).fill('');
         errorRow[0] = personName;
         errorRow[1] = `シートの読み込みに失敗しました: ${e.message}`;
+        errorRow[errorRow.length - 1] = url; // 最後の列にURLを設定
         mergedData.push(errorRow);
       }
     }
@@ -381,6 +392,7 @@ function div_mergeResponseSheets() {
   outputSheet.autoResizeColumns(1, mergedData[0].length);
   outputSheet.setFrozenRows(1);
   outputSheet.getRange(1, 1, 1, mergedData[0].length).setFontWeight('bold');
+  SpreadsheetApp.flush();
   Logger.log('(div) マージ処理が完了しました。');
   SpreadsheetApp.getUi().alert('(div) 回答シートマージ処理が完了しました。');
 }

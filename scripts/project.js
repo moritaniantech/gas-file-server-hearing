@@ -40,6 +40,14 @@ const PROJECT_COL_I_MANAGER = 8;          // I列: 管理者
  * (project) メイン処理1: (新)project-2シートを読み込み、確認先ごとにスプレッドシートを分割作成します。
  */
 function project_createResponseSheets() {
+  // ユーザー認証チェック
+  const allowedUser = 'ryosuke.morita.ts@mixi.co.jp';
+  const currentUser = Session.getActiveUser().getEmail();
+  if (currentUser !== allowedUser) {
+    SpreadsheetApp.getUi().alert('エラー (project)', `このスクリプトは ${allowedUser} のみが実行できます。\n現在のユーザー: ${currentUser}`, SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
   if (PROJECT_DESTINATION_FOLDER_ID === 'YOUR_FOLDER_ID_HERE_FOR_PROJECT') {
     SpreadsheetApp.getUi().alert('スクリプトエラー (project)', 'PROJECT_DESTINATION_FOLDER_IDが設定されていません。', SpreadsheetApp.getUi().ButtonSet.OK);
     return;
@@ -103,14 +111,24 @@ function project_createResponseSheets() {
 
   // --- (project) 各フォルダごとに確認先を決定 ---
   // 要件: 
-  // 1. I列の管理者に「×」が入力されている場合は、確認先を「確認先不明」
-  // 2. I列の管理者に「×」以外が入力されている場合:
+  // 1. G列（移行先）が「AWS S3」の場合は、確認先を「確認不要」
+  // 2. I列の管理者に「×」が入力されている場合は、確認先を「確認先不明」
+  // 3. I列の管理者に「×」以外が入力されている場合:
   //    - A列に同一の名称が複数行に記載されている場合、B列「ステータス」が「在職」と記入されている行から1件確認先を絞り出す
   //    - B列がすべて「在職」以外の場合、確認先不明として分類
   const folderConfirmationPerson = {};
   
   for (const folderName in dataByFolder) {
     const rows = dataByFolder[folderName];
+    
+    // G列（移行先）が「AWS S3」かどうかを確認（最初の行でチェック）
+    const firstRow = rows[0];
+    const migrationDest = firstRow[PROJECT_COL_G_MIGRATION_DEST];
+    if (migrationDest && migrationDest.toString().trim() === 'AWS S3') {
+      folderConfirmationPerson[folderName] = '確認不要';
+      Logger.log(`(project) フォルダ「${folderName}」: G列が「AWS S3」のため、確認不要`);
+      continue;
+    }
     
     // B列（ステータス）が「在職」の行を探す（型変換とtrimを考慮）
     const activeRows = rows.filter(row => {
@@ -183,30 +201,39 @@ function project_createResponseSheets() {
     });
     const otherManagersStr = otherManagers.join(',');
 
-    // 各フォルダの各行を確認先ごとに振り分け
-    rows.forEach(row => {
-      // 回答シートの列構成: A, C, D, E, F列 + 他フォルダ管理者 + ユーザー入力列
-      const newRow = [
-        row[PROJECT_COL_A_FOLDER_NAME],      // 0: projectフォルダ（A列）
-        row[PROJECT_COL_C_FOLDER_COUNT],     // 1: フォルダ数（C列）
-        row[PROJECT_COL_D_FILE_COUNT],       // 2: ファイル数（D列）
-        row[PROJECT_COL_E_DATA_SIZE],        // 3: データ容量/GB（E列）
-        row[PROJECT_COL_F_LAST_UPDATED],     // 4: 最終更新日（F列）
-        otherManagersStr,                     // 5: 他フォルダ管理者
-        '',                                   // 6: 回答者メールアドレス（ユーザー記入）
-        row[PROJECT_COL_G_MIGRATION_DEST] || '',    // 7: 移行先（G列）
-        row[PROJECT_COL_H_MIGRATION_METHOD] || '',  // 8: 移行方法（H列）
-        '',                                   // 9: 共有ドライブ名（ユーザー記入）
-        false,                                // 10: 個人情報有無（チェックボックス）
-        false,                                // 11: 自動化有無（チェックボックス）
-        ''                                    // 12: その他（ユーザー記入）
-      ];
-
-      if (!dataByPerson[confirmationPerson]) {
-        dataByPerson[confirmationPerson] = [];
-      }
-      dataByPerson[confirmationPerson].push(newRow);
+    // 各フォルダの1件のみを確認先ごとに振り分け（同一フォルダ名の重複を防ぐ）
+    // 在職の行を優先し、なければ最初の行を使用
+    const activeRows = rows.filter(row => {
+      const status = row[PROJECT_COL_B_STATUS];
+      if (!status) return false;
+      const statusStr = status.toString().trim();
+      return statusStr === '在職';
     });
+    
+    // 在職の行があれば最初の1件、なければ最初の行を使用
+    const selectedRow = activeRows.length > 0 ? activeRows[0] : rows[0];
+    
+    // 回答シートの列構成: A, C, D, E, F列 + 他フォルダ管理者 + ユーザー入力列
+    const newRow = [
+      selectedRow[PROJECT_COL_A_FOLDER_NAME],      // 0: projectフォルダ（A列）
+      selectedRow[PROJECT_COL_C_FOLDER_COUNT],     // 1: フォルダ数（C列）
+      selectedRow[PROJECT_COL_D_FILE_COUNT],       // 2: ファイル数（D列）
+      selectedRow[PROJECT_COL_E_DATA_SIZE],        // 3: データ容量/GB（E列）
+      selectedRow[PROJECT_COL_F_LAST_UPDATED],     // 4: 最終更新日（F列）
+      otherManagersStr,                             // 5: 他フォルダ管理者
+      '',                                           // 6: 回答者メールアドレス（ユーザー記入）
+      selectedRow[PROJECT_COL_G_MIGRATION_DEST] || '',    // 7: 移行先（G列）
+      selectedRow[PROJECT_COL_H_MIGRATION_METHOD] || '',  // 8: 移行方法（H列）
+      '',                                           // 9: 共有ドライブ名（ユーザー記入）
+      false,                                        // 10: 個人情報有無（チェックボックス）
+      false,                                        // 11: 自動化有無（チェックボックス）
+      ''                                            // 12: その他（ユーザー記入）
+    ];
+
+    if (!dataByPerson[confirmationPerson]) {
+      dataByPerson[confirmationPerson] = [];
+    }
+    dataByPerson[confirmationPerson].push(newRow);
   }
   
   Logger.log(`(project) データ振り分け完了。確認先: ${Object.keys(dataByPerson).length}件`);
@@ -370,6 +397,7 @@ function project_mergeResponseSheets() {
       if (!headersSet) {
         headers = values.shift();
         headers.unshift('確認先');
+        headers.push('参照元URL');
         mergedData.push(headers);
         headersSet = true;
       } else {
@@ -378,6 +406,7 @@ function project_mergeResponseSheets() {
 
       values.forEach(dataRow => {
         dataRow.unshift(personName);
+        dataRow.push(url);
         mergedData.push(dataRow);
       });
       Logger.log(`(project) マージ完了: ${personName}`);
@@ -388,6 +417,7 @@ function project_mergeResponseSheets() {
         const errorRow = new Array(headers.length).fill('');
         errorRow[0] = personName;
         errorRow[1] = `シートの読み込みに失敗しました: ${e.message}`;
+        errorRow[errorRow.length - 1] = url; // 最後の列にURLを設定
         mergedData.push(errorRow);
       }
     }
@@ -411,6 +441,7 @@ function project_mergeResponseSheets() {
   outputSheet.autoResizeColumns(1, mergedData[0].length);
   outputSheet.setFrozenRows(1);
   outputSheet.getRange(1, 1, 1, mergedData[0].length).setFontWeight('bold');
+  SpreadsheetApp.flush();
   Logger.log('(project) マージ処理が完了しました。');
   SpreadsheetApp.getUi().alert('(project) 回答シートマージ処理が完了しました。');
 }
