@@ -203,12 +203,7 @@ function project_createResponseSheets() {
 
     // 各フォルダの1件のみを確認先ごとに振り分け（同一フォルダ名の重複を防ぐ）
     // 在職の行を優先し、なければ最初の行を使用
-    const activeRows = rows.filter(row => {
-      const status = row[PROJECT_COL_B_STATUS];
-      if (!status) return false;
-      const statusStr = status.toString().trim();
-      return statusStr === '在職';
-    });
+    // （activeRowsは上で既に計算済みなので再利用）
     
     // 在職の行があれば最初の1件、なければ最初の行を使用
     const selectedRow = activeRows.length > 0 ? activeRows[0] : rows[0];
