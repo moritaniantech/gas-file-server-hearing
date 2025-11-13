@@ -172,6 +172,7 @@ function project_createResponseSheets() {
 
   // --- (project) 確認先ごとにデータを振り分け、他フォルダ管理者を計算 ---
   const dataByPerson = {};
+  const otherManagersByPerson = {}; // 確認先ごとの他フォルダ管理者を保存
   
   for (const folderName in dataByFolder) {
     const rows = dataByFolder[folderName];
@@ -227,8 +228,15 @@ function project_createResponseSheets() {
 
     if (!dataByPerson[confirmationPerson]) {
       dataByPerson[confirmationPerson] = [];
+      otherManagersByPerson[confirmationPerson] = [];
     }
     dataByPerson[confirmationPerson].push(newRow);
+    // 他フォルダ管理者を配列として保存（重複を除去）
+    otherManagers.forEach(manager => {
+      if (otherManagersByPerson[confirmationPerson].indexOf(manager) === -1) {
+        otherManagersByPerson[confirmationPerson].push(manager);
+      }
+    });
   }
   
   Logger.log(`(project) データ振り分け完了。確認先: ${Object.keys(dataByPerson).length}件`);
@@ -275,9 +283,10 @@ function project_createResponseSheets() {
   for (const person in dataByPerson) {
     const fileName = `(project) ${person}`;
     const rows = dataByPerson[person];
+    const otherManagers = otherManagersByPerson[person] || [];
     Logger.log(`(project) シート作成開始: ${fileName} (${rows.length}件)`);
     try {
-      const result = project_createAndFormatSheet(fileName, outputHeaders, rows, destinationFolder, userInputHeaderIndices, rules);
+      const result = project_createAndFormatSheet(fileName, outputHeaders, rows, destinationFolder, userInputHeaderIndices, rules, person, otherManagers);
       summaryData.push([person, result.url, result.rowCount]);
       Logger.log(`(project) 作成完了: ${person} (URL: ${result.url})`);
     } catch (e) {
@@ -289,15 +298,47 @@ function project_createResponseSheets() {
   summarySheet.getRange(1, 1, summaryData.length, 3).setValues(summaryData);
   summarySheet.autoResizeColumns(1, 3);
   SpreadsheetApp.flush();
+
+  // --- (project) 一覧シートをフォルダに作成し、社内メンバー全員に閲覧権限を付与 ---
+  try {
+    const summaryFileName = PROJECT_SUMMARY_SHEET_NAME;
+    const summarySs = SpreadsheetApp.create(summaryFileName);
+    const summaryFileId = summarySs.getId();
+    const summaryFile = DriveApp.getFileById(summaryFileId);
+    destinationFolder.addFile(summaryFile);
+    DriveApp.getRootFolder().removeFile(summaryFile);
+    
+    const summarySheetInFolder = summarySs.getSheets()[0];
+    summarySheetInFolder.getRange(1, 1, summaryData.length, 3).setValues(summaryData);
+    summarySheetInFolder.autoResizeColumns(1, 3);
+    SpreadsheetApp.flush();
+    
+    // 社内メンバー全員に閲覧権限を付与（通知なし）
+    addViewerPermissionToAllCompanyMembers(summaryFileId);
+    
+    Logger.log(`(project) 一覧シートをフォルダに作成しました: ${summarySs.getUrl()}`);
+  } catch (e) {
+    Logger.log(`(project) 一覧シートの作成に失敗しました: ${e.message}`);
+  }
+
   SpreadsheetApp.getUi().alert('(project) 回答シート作成処理が完了しました。');
 }
 
 /**
  * (project) ヘルパー関数: スプレッドシートを作成し、フォーマットします。
+ * @param {string} fileName - ファイル名
+ * @param {Array} headers - ヘッダー行
+ * @param {Array} dataRows - データ行
+ * @param {Folder} folder - 保存先フォルダ
+ * @param {Array} highlightIndices - ハイライトする列のインデックス
+ * @param {Object} rules - データバリデーションルール
+ * @param {string} confirmationPerson - 確認先の氏名（権限付与用）
+ * @param {Array} otherManagers - 他フォルダ管理者の氏名配列（権限付与用）
  */
-function project_createAndFormatSheet(fileName, headers, dataRows, folder, highlightIndices, rules) {
+function project_createAndFormatSheet(fileName, headers, dataRows, folder, highlightIndices, rules, confirmationPerson, otherManagers) {
   const newSs = SpreadsheetApp.create(fileName);
-  const file = DriveApp.getFileById(newSs.getId());
+  const fileId = newSs.getId();
+  const file = DriveApp.getFileById(fileId);
   folder.addFile(file);
   DriveApp.getRootFolder().removeFile(file);
   const sheet = newSs.getSheets()[0];
@@ -352,12 +393,37 @@ function project_createAndFormatSheet(fileName, headers, dataRows, folder, highl
   }
 
   try {
+    SpreadsheetApp.flush(); // データ書き込みとフォーマットを確実に反映
     sheet.autoResizeColumns(1, numCols);
   } catch (e) {
     Logger.log(`> (project) ${fileName}: 列幅の自動調整に失敗しました。 ${e.message}`);
   }
 
-  return { url: newSs.getUrl(), rowCount: numRows };
+  // 確認先ユーザーに編集権限を付与（通知なし）
+  if (confirmationPerson) {
+    const userEmail = getEmailFromName(confirmationPerson);
+    if (userEmail) {
+      addEditorPermission(fileId, userEmail);
+    } else {
+      Logger.log(`(project) 確認先「${confirmationPerson}」のメールアドレスが見つかりませんでした。`);
+    }
+  }
+
+  // 他フォルダ管理者に編集権限を付与（通知なし）
+  if (otherManagers && otherManagers.length > 0) {
+    otherManagers.forEach(managerName => {
+      if (managerName && managerName.trim()) {
+        const managerEmail = getEmailFromName(managerName.trim());
+        if (managerEmail) {
+          addEditorPermission(fileId, managerEmail);
+        } else {
+          Logger.log(`(project) 他フォルダ管理者「${managerName}」のメールアドレスが見つかりませんでした。`);
+        }
+      }
+    });
+  }
+
+  return { url: newSs.getUrl(), rowCount: numRows, fileId: fileId };
 }
 
 /**
@@ -439,4 +505,57 @@ function project_mergeResponseSheets() {
   SpreadsheetApp.flush();
   Logger.log('(project) マージ処理が完了しました。');
   SpreadsheetApp.getUi().alert('(project) 回答シートマージ処理が完了しました。');
+}
+
+/**
+ * (project) 検証用: 一覧シートに記載されているすべてのSpreadsheetに対して、検証用ユーザーに編集権限を付与します。
+ */
+function project_addTestPermissions() {
+  const testUsers = [
+    'ryosuke.morita.ts@mixi.co.jp',
+    'yuta.toya.ts@mixi.co.jp'
+  ];
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const summarySheet = ss.getSheetByName(PROJECT_SUMMARY_SHEET_NAME);
+  if (!summarySheet) {
+    SpreadsheetApp.getUi().alert(`エラー (project): 「${PROJECT_SUMMARY_SHEET_NAME}」が見つかりません。`);
+    return;
+  }
+
+  const urlData = summarySheet.getRange(2, 1, summarySheet.getLastRow() - 1, 3).getValues();
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (const row of urlData) {
+    const personName = row[0];
+    const url = row[1];
+    if (!url || !url.toString().startsWith('http')) {
+      Logger.log(`(project) 検証用: スキップ: ${personName} (無効なURL)`);
+      continue;
+    }
+
+    try {
+      const targetSs = SpreadsheetApp.openByUrl(url);
+      const fileId = targetSs.getId();
+
+      // 検証用ユーザーに編集権限を付与（通知なし）
+      testUsers.forEach(userEmail => {
+        try {
+          addEditorPermission(fileId, userEmail);
+          Logger.log(`(project) 検証用: 権限を付与しました: ${userEmail} -> ${personName}`);
+          successCount++;
+        } catch (e) {
+          Logger.log(`(project) 検証用: 権限付与に失敗しました: ${userEmail} -> ${personName}, エラー: ${e.message}`);
+          errorCount++;
+        }
+      });
+    } catch (e) {
+      Logger.log(`(project) 検証用: エラー: ${personName} のシート読み込み失敗。 (URL: ${url}) ${e.message}`);
+      errorCount += testUsers.length;
+    }
+  }
+
+  SpreadsheetApp.getUi().alert(`(project) 検証用権限付与が完了しました。\n成功: ${successCount}件\n失敗: ${errorCount}件`);
+  Logger.log(`(project) 検証用権限付与完了: 成功=${successCount}, 失敗=${errorCount}`);
 }

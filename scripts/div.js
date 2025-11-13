@@ -22,7 +22,191 @@ function onOpen() {
     .addSubMenu(ui.createMenu('project フォルダ処理')
       .addItem('1. (project) 回答シート作成', 'project_createResponseSheets')
       .addItem('2. (project) 回答シートマージ', 'project_mergeResponseSheets'))
+    .addSeparator() // 区切り線
+    .addSubMenu(ui.createMenu('検証用')
+      .addItem('(div) 検証用: 権限付与', 'div_addTestPermissions')
+      .addItem('(project) 検証用: 権限付与', 'project_addTestPermissions'))
     .addToUi();
+}
+
+// ===================================================
+// 共通ヘルパー関数: ユーザーメールアドレス取得
+// ===================================================
+
+/** ユーザー情報を取得するSpreadsheetのID */
+const USER_INFO_SPREADSHEET_ID = '1-5DVncFkrRIbQHrtB7pq2d7Mc5vc2GIdZX4w0wMfveQ';
+
+/** ユーザー情報のキャッシュ（パフォーマンス向上のため） */
+let userEmailCache = null;
+
+/**
+ * ユーザー情報Spreadsheetから氏名とメールアドレスのマッピングを取得します。
+ * @return {Object} 氏名をキー、メールアドレスを値とするオブジェクト
+ */
+function getUserEmailMapping() {
+  if (userEmailCache !== null) {
+    return userEmailCache;
+  }
+
+  try {
+    const userInfoSs = SpreadsheetApp.openById(USER_INFO_SPREADSHEET_ID);
+    const sheet = userInfoSs.getSheets()[0];
+    const data = sheet.getDataRange().getValues();
+    
+    // ヘッダー行をスキップ（1行目がヘッダーの場合）
+    const rows = data.slice(1);
+    
+    const mapping = {};
+    rows.forEach(row => {
+      const name = row[0]; // A列: 氏名（「姓 名」フォーマット）
+      const email = row[7]; // H列: メールアドレス
+      
+      if (name && email) {
+        const nameStr = name.toString().trim();
+        const emailStr = email.toString().trim();
+        
+        if (nameStr && emailStr) {
+          // 「姓 名」フォーマットで保存
+          mapping[nameStr] = emailStr;
+          // 「姓名」（スペースなし）フォーマットでも保存（project用）
+          const nameWithoutSpace = nameStr.replace(/\s+/g, '');
+          if (nameWithoutSpace !== nameStr) {
+            mapping[nameWithoutSpace] = emailStr;
+          }
+        }
+      }
+    });
+    
+    userEmailCache = mapping;
+    Logger.log(`ユーザー情報を取得しました: ${Object.keys(mapping).length}件`);
+    return mapping;
+  } catch (e) {
+    Logger.log(`ユーザー情報の取得に失敗しました: ${e.message}`);
+    return {};
+  }
+}
+
+/**
+ * 氏名からメールアドレスを取得します。
+ * @param {string} personName - 氏名（「姓 名」または「姓名」フォーマット）
+ * @return {string|null} メールアドレス（見つからない場合はnull）
+ */
+function getEmailFromName(personName) {
+  if (!personName || personName === '確認先不明' || personName === 'div不明' || personName === '確認不要') {
+    return null;
+  }
+  
+  const mapping = getUserEmailMapping();
+  const nameStr = personName.toString().trim();
+  
+  // 直接一致を試す
+  if (mapping[nameStr]) {
+    return mapping[nameStr];
+  }
+  
+  // スペースを除去して一致を試す（project用）
+  const nameWithoutSpace = nameStr.replace(/\s+/g, '');
+  if (nameWithoutSpace !== nameStr && mapping[nameWithoutSpace]) {
+    return mapping[nameWithoutSpace];
+  }
+  
+  // スペースを追加して一致を試す（div用）
+  // 姓名 → 姓 名 への変換（2文字の場合は間にスペースを挿入）
+  if (nameWithoutSpace.length === 2) {
+    const nameWithSpace = nameWithoutSpace[0] + ' ' + nameWithoutSpace[1];
+    if (mapping[nameWithSpace]) {
+      return mapping[nameWithSpace];
+    }
+  }
+  
+  Logger.log(`メールアドレスが見つかりませんでした: ${personName}`);
+  return null;
+}
+
+// ===================================================
+// 共通ヘルパー関数: 権限付与
+// ===================================================
+
+/**
+ * ファイルに編集権限を付与します（メール通知なし）。
+ * @param {string} fileId - ファイルID
+ * @param {string} userEmail - ユーザーのメールアドレス
+ */
+function addEditorPermission(fileId, userEmail) {
+  if (!userEmail) {
+    Logger.log(`メールアドレスが空のため、権限を付与しません: fileId=${fileId}`);
+    return;
+  }
+
+  try {
+    const resource = {
+      'role': 'writer',
+      'type': 'user',
+      'emailAddress': userEmail
+    };
+
+    Drive.Permissions.create(resource, fileId, {
+      'sendNotificationEmail': false,
+      'supportsAllDrives': true
+    });
+    
+    Logger.log(`編集権限を付与しました: ${userEmail} -> ${fileId}`);
+  } catch (e) {
+    Logger.log(`権限付与に失敗しました: ${userEmail} -> ${fileId}, エラー: ${e.message}`);
+  }
+}
+
+/**
+ * ファイルに閲覧権限を付与します（メール通知なし）。
+ * @param {string} fileId - ファイルID
+ * @param {string} userEmail - ユーザーのメールアドレス
+ */
+function addViewerPermission(fileId, userEmail) {
+  if (!userEmail) {
+    Logger.log(`メールアドレスが空のため、権限を付与しません: fileId=${fileId}`);
+    return;
+  }
+
+  try {
+    const resource = {
+      'role': 'reader',
+      'type': 'user',
+      'emailAddress': userEmail
+    };
+
+    Drive.Permissions.create(resource, fileId, {
+      'sendNotificationEmail': false,
+      'supportsAllDrives': true
+    });
+    
+    Logger.log(`閲覧権限を付与しました: ${userEmail} -> ${fileId}`);
+  } catch (e) {
+    Logger.log(`権限付与に失敗しました: ${userEmail} -> ${fileId}, エラー: ${e.message}`);
+  }
+}
+
+/**
+ * ファイルに社内メンバー全員に閲覧権限を付与します（メール通知なし）。
+ * @param {string} fileId - ファイルID
+ */
+function addViewerPermissionToAllCompanyMembers(fileId) {
+  try {
+    // ドメイン全体に閲覧権限を付与
+    const resource = {
+      'role': 'reader',
+      'type': 'domain',
+      'domain': 'mixi.co.jp'
+    };
+
+    Drive.Permissions.create(resource, fileId, {
+      'sendNotificationEmail': false,
+      'supportsAllDrives': true
+    });
+    
+    Logger.log(`社内メンバー全員に閲覧権限を付与しました: ${fileId}`);
+  } catch (e) {
+    Logger.log(`社内メンバーへの権限付与に失敗しました: ${fileId}, エラー: ${e.message}`);
+  }
 }
 
 
@@ -192,8 +376,8 @@ function div_createResponseSheets() {
     const rows = dataByPerson[person];
     Logger.log(`(div) シート作成開始: ${fileName} (${rows.length}件)`);
     try {
-      // 内部ヘルパー関数を呼び出す
-      const result = div_createAndFormatSheet(fileName, outputHeaders, rows, destinationFolder, userInputHeaderIndices, rules);
+      // 内部ヘルパー関数を呼び出す（確認先の氏名を渡す）
+      const result = div_createAndFormatSheet(fileName, outputHeaders, rows, destinationFolder, userInputHeaderIndices, rules, person);
       summaryData.push([person, result.url, result.rowCount]);
       Logger.log(`(div) 作成完了: ${person} (URL: ${result.url})`);
     } catch (e) {
@@ -215,7 +399,8 @@ function div_createResponseSheets() {
     ]);
     
     try {
-      const result = div_createAndFormatSheet(fileName, outputHeaders, mappedExcludedData, destinationFolder, userInputHeaderIndices, rules);
+      // 除外シートには確認先がないため、nullを渡す
+      const result = div_createAndFormatSheet(fileName, outputHeaders, mappedExcludedData, destinationFolder, userInputHeaderIndices, rules, null);
       summaryData.push([fileName, result.url, result.rowCount]);
       Logger.log(`(div) 作成完了: ${fileName} (URL: ${result.url})`);
     } catch (e) {
@@ -227,15 +412,46 @@ function div_createResponseSheets() {
   summarySheet.getRange(1, 1, summaryData.length, 3).setValues(summaryData);
   summarySheet.autoResizeColumns(1, 3);
   SpreadsheetApp.flush();
+
+  // --- (div) 一覧シートをフォルダに作成し、社内メンバー全員に閲覧権限を付与 ---
+  try {
+    const summaryFileName = DIV_SUMMARY_SHEET_NAME;
+    const summarySs = SpreadsheetApp.create(summaryFileName);
+    const summaryFileId = summarySs.getId();
+    const summaryFile = DriveApp.getFileById(summaryFileId);
+    destinationFolder.addFile(summaryFile);
+    DriveApp.getRootFolder().removeFile(summaryFile);
+    
+    const summarySheetInFolder = summarySs.getSheets()[0];
+    summarySheetInFolder.getRange(1, 1, summaryData.length, 3).setValues(summaryData);
+    summarySheetInFolder.autoResizeColumns(1, 3);
+    SpreadsheetApp.flush();
+    
+    // 社内メンバー全員に閲覧権限を付与（通知なし）
+    addViewerPermissionToAllCompanyMembers(summaryFileId);
+    
+    Logger.log(`(div) 一覧シートをフォルダに作成しました: ${summarySs.getUrl()}`);
+  } catch (e) {
+    Logger.log(`(div) 一覧シートの作成に失敗しました: ${e.message}`);
+  }
+
   SpreadsheetApp.getUi().alert('(div) 回答シート作成処理が完了しました。');
 }
 
 /**
  * (div) ヘルパー関数: スプレッドシートを作成し、フォーマットします。
+ * @param {string} fileName - ファイル名
+ * @param {Array} headers - ヘッダー行
+ * @param {Array} dataRows - データ行
+ * @param {Folder} folder - 保存先フォルダ
+ * @param {Array} highlightIndices - ハイライトする列のインデックス
+ * @param {Object} rules - データバリデーションルール
+ * @param {string} confirmationPerson - 確認先の氏名（権限付与用）
  */
-function div_createAndFormatSheet(fileName, headers, dataRows, folder, highlightIndices, rules) {
+function div_createAndFormatSheet(fileName, headers, dataRows, folder, highlightIndices, rules, confirmationPerson) {
   const newSs = SpreadsheetApp.create(fileName);
-  const file = DriveApp.getFileById(newSs.getId());
+  const fileId = newSs.getId();
+  const file = DriveApp.getFileById(fileId);
   folder.addFile(file);
   DriveApp.getRootFolder().removeFile(file);
   const sheet = newSs.getSheets()[0];
@@ -281,39 +497,25 @@ function div_createAndFormatSheet(fileName, headers, dataRows, folder, highlight
     Logger.log(`> (div) ${fileName}: データ件数が0のため、スキップしました。`);
   }
 
-  // 列幅の調整（列名と値の両方を考慮）
+  // 列幅の調整
   try {
+    SpreadsheetApp.flush(); // データ書き込みとフォーマットを確実に反映
     sheet.autoResizeColumns(1, numCols);
-    SpreadsheetApp.flush(); // 自動調整を確実に反映
-    
-    // 各列の内容を確認して、必要に応じて列幅を調整
-    for (let col = 1; col <= numCols; col++) {
-      const headerValue = headers[col - 1];
-      const headerWidth = headerValue ? headerValue.toString().length * 1.2 : 10;
-      
-      // データ行の最大幅を確認
-      let maxDataWidth = 0;
-      if (numRows > 0) {
-        for (let row = 2; row <= numRows + 1; row++) {
-          const cellValue = sheet.getRange(row, col).getValue();
-          if (cellValue) {
-            const cellWidth = cellValue.toString().length * 1.1;
-            if (cellWidth > maxDataWidth) {
-              maxDataWidth = cellWidth;
-            }
-          }
-        }
-      }
-      
-      // ヘッダーとデータの大きい方に余裕を持たせて設定
-      const finalWidth = Math.max(headerWidth, maxDataWidth, 10) + 2;
-      sheet.setColumnWidth(col, Math.min(finalWidth, 300)); // 最大300ピクセル
-    }
   } catch (e) {
     Logger.log(`> (div) ${fileName}: 列幅の自動調整に失敗しました。 ${e.message}`);
   }
 
-  return { url: newSs.getUrl(), rowCount: numRows };
+  // 確認先ユーザーに編集権限を付与（通知なし）
+  if (confirmationPerson) {
+    const userEmail = getEmailFromName(confirmationPerson);
+    if (userEmail) {
+      addEditorPermission(fileId, userEmail);
+    } else {
+      Logger.log(`(div) 確認先「${confirmationPerson}」のメールアドレスが見つかりませんでした。`);
+    }
+  }
+
+  return { url: newSs.getUrl(), rowCount: numRows, fileId: fileId };
 }
 
 /**
@@ -395,4 +597,57 @@ function div_mergeResponseSheets() {
   SpreadsheetApp.flush();
   Logger.log('(div) マージ処理が完了しました。');
   SpreadsheetApp.getUi().alert('(div) 回答シートマージ処理が完了しました。');
+}
+
+/**
+ * (div) 検証用: 一覧シートに記載されているすべてのSpreadsheetに対して、検証用ユーザーに編集権限を付与します。
+ */
+function div_addTestPermissions() {
+  const testUsers = [
+    'ryosuke.morita.ts@mixi.co.jp',
+    'yuta.toya.ts@mixi.co.jp'
+  ];
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const summarySheet = ss.getSheetByName(DIV_SUMMARY_SHEET_NAME);
+  if (!summarySheet) {
+    SpreadsheetApp.getUi().alert(`エラー (div): 「${DIV_SUMMARY_SHEET_NAME}」が見つかりません。`);
+    return;
+  }
+
+  const urlData = summarySheet.getRange(2, 1, summarySheet.getLastRow() - 1, 3).getValues();
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (const row of urlData) {
+    const personName = row[0];
+    const url = row[1];
+    if (!url || !url.toString().startsWith('http')) {
+      Logger.log(`(div) 検証用: スキップ: ${personName} (無効なURL)`);
+      continue;
+    }
+
+    try {
+      const targetSs = SpreadsheetApp.openByUrl(url);
+      const fileId = targetSs.getId();
+
+      // 検証用ユーザーに編集権限を付与（通知なし）
+      testUsers.forEach(userEmail => {
+        try {
+          addEditorPermission(fileId, userEmail);
+          Logger.log(`(div) 検証用: 権限を付与しました: ${userEmail} -> ${personName}`);
+          successCount++;
+        } catch (e) {
+          Logger.log(`(div) 検証用: 権限付与に失敗しました: ${userEmail} -> ${personName}, エラー: ${e.message}`);
+          errorCount++;
+        }
+      });
+    } catch (e) {
+      Logger.log(`(div) 検証用: エラー: ${personName} のシート読み込み失敗。 (URL: ${url}) ${e.message}`);
+      errorCount += testUsers.length;
+    }
+  }
+
+  SpreadsheetApp.getUi().alert(`(div) 検証用権限付与が完了しました。\n成功: ${successCount}件\n失敗: ${errorCount}件`);
+  Logger.log(`(div) 検証用権限付与完了: 成功=${successCount}, 失敗=${errorCount}`);
 }
