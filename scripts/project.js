@@ -18,9 +18,6 @@ const PROJECT_SUMMARY_SHEET_NAME = 'project回答シートURL一覧';
 /** (project) 確認先不明の場合のファイル名 */
 const PROJECT_UNKNOWN_SHEET_NAME = '確認先不明';
 
-/** (project) AWS S3が移行先として指定されている場合のファイル名 */
-const PROJECT_EXCLUDED_SHEET_NAME = 'project確認不要';
-
 /** (project)【重要】回答用スプレッドシートを保存するGoogle DriveフォルダのID */
 const PROJECT_DESTINATION_FOLDER_ID = '1OjgFtdJYA3kyZm95ogtiiYAkU7zLL8wM'; // ← ★★★ 設定してください ★★★
 
@@ -157,7 +154,6 @@ function project_createResponseSheets() {
 
   // --- (project) 確認先ごとにデータを振り分け、他フォルダ管理者を計算 ---
   const dataByPerson = {};
-  const excludedData = [];
   
   for (const folderName in dataByFolder) {
     const rows = dataByFolder[folderName];
@@ -189,28 +185,6 @@ function project_createResponseSheets() {
 
     // 各フォルダの各行を確認先ごとに振り分け
     rows.forEach(row => {
-      // AWS S3が選択されている場合は除外シートに追加
-      const migrationDest = row[PROJECT_COL_G_MIGRATION_DEST];
-      if (migrationDest === 'AWS S3') {
-        const excludedRow = [
-          row[PROJECT_COL_A_FOLDER_NAME],      // 0: projectフォルダ（A列）
-          row[PROJECT_COL_C_FOLDER_COUNT],     // 1: フォルダ数（C列）
-          row[PROJECT_COL_D_FILE_COUNT],       // 2: ファイル数（D列）
-          row[PROJECT_COL_E_DATA_SIZE],        // 3: データ容量/GB（E列）
-          row[PROJECT_COL_F_LAST_UPDATED],     // 4: 最終更新日（F列）
-          otherManagersStr,                     // 5: 他フォルダ管理者
-          '',                                   // 6: 回答者メールアドレス（ユーザー記入）
-          row[PROJECT_COL_G_MIGRATION_DEST] || '',    // 7: 移行先（G列）
-          row[PROJECT_COL_H_MIGRATION_METHOD] || '',  // 8: 移行方法（H列）
-          '',                                   // 9: 共有ドライブ名（ユーザー記入）
-          false,                                // 10: 個人情報有無（チェックボックス）
-          false,                                // 11: 自動化有無（チェックボックス）
-          ''                                    // 12: その他（ユーザー記入）
-        ];
-        excludedData.push(excludedRow);
-        return;
-      }
-
       // 回答シートの列構成: A, C, D, E, F列 + 他フォルダ管理者 + ユーザー入力列
       const newRow = [
         row[PROJECT_COL_A_FOLDER_NAME],      // 0: projectフォルダ（A列）
@@ -235,7 +209,7 @@ function project_createResponseSheets() {
     });
   }
   
-  Logger.log(`(project) データ振り分け完了。確認先: ${Object.keys(dataByPerson).length}件、除外: ${excludedData.length}件`);
+  Logger.log(`(project) データ振り分け完了。確認先: ${Object.keys(dataByPerson).length}件`);
   for (const person in dataByPerson) {
     Logger.log(`(project) 確認先「${person}」: ${dataByPerson[person].length}件`);
   }
@@ -287,20 +261,6 @@ function project_createResponseSheets() {
     } catch (e) {
       Logger.log(`(project) エラー: ${person} のシート作成に失敗しました。 ${e.message}`);
       summaryData.push([person, `作成失敗: ${e.message}`, 0]);
-    }
-  }
-
-  // --- (project) 「確認不要」シートの作成 ---
-  if (excludedData.length > 0) {
-    const fileName = PROJECT_EXCLUDED_SHEET_NAME;
-    Logger.log(`(project) シート作成開始: ${fileName} (${excludedData.length}件)`);
-    try {
-      const result = project_createAndFormatSheet(fileName, outputHeaders, excludedData, destinationFolder, userInputHeaderIndices, rules);
-      summaryData.push([fileName, result.url, result.rowCount]);
-      Logger.log(`(project) 作成完了: ${fileName} (URL: ${result.url})`);
-    } catch (e) {
-      Logger.log(`(project) エラー: ${fileName} のシート作成に失敗しました。 ${e.message}`);
-      summaryData.push([fileName, `作成失敗: ${e.message}`, 0]);
     }
   }
 
@@ -369,34 +329,8 @@ function project_createAndFormatSheet(fileName, headers, dataRows, folder, highl
     Logger.log(`> (project) ${fileName}: データ件数が0のため、スキップしました。`);
   }
 
-  // 列幅の調整（列名と値の両方を考慮）
   try {
     sheet.autoResizeColumns(1, numCols);
-    SpreadsheetApp.flush(); // 自動調整を確実に反映
-    
-    // 各列の内容を確認して、必要に応じて列幅を調整
-    for (let col = 1; col <= numCols; col++) {
-      const headerValue = headers[col - 1];
-      const headerWidth = headerValue ? headerValue.toString().length * 1.5 : 10;
-      
-      // データ行の最大幅を確認
-      let maxDataWidth = 0;
-      if (numRows > 0) {
-        for (let row = 2; row <= numRows + 1; row++) {
-          const cellValue = sheet.getRange(row, col).getValue();
-          if (cellValue) {
-            const cellWidth = cellValue.toString().length * 1.3;
-            if (cellWidth > maxDataWidth) {
-              maxDataWidth = cellWidth;
-            }
-          }
-        }
-      }
-      
-      // ヘッダーとデータの大きい方に余裕を持たせて設定
-      const finalWidth = Math.max(headerWidth, maxDataWidth, 10) + 5;
-      sheet.setColumnWidth(col, Math.min(finalWidth, 300)); // 最大300ピクセル
-    }
   } catch (e) {
     Logger.log(`> (project) ${fileName}: 列幅の自動調整に失敗しました。 ${e.message}`);
   }
