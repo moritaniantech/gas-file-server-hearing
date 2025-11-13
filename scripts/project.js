@@ -64,8 +64,18 @@ function project_createResponseSheets() {
     return;
   }
 
-  const data = sourceSheet.getDataRange().getValues();
-  const headers = data.shift(); // ヘッダー行を取得
+  // 「（新）project-2」シートは4行目が列名、5行目からレコードが開始
+  const lastRow = sourceSheet.getLastRow();
+  const lastCol = sourceSheet.getLastColumn();
+  
+  // 4行目を列名として取得
+  const headers = sourceSheet.getRange(4, 1, 1, lastCol).getValues()[0];
+  
+  // 5行目以降をデータとして取得
+  let data = [];
+  if (lastRow >= 5) {
+    data = sourceSheet.getRange(5, 1, lastRow - 4, lastCol).getValues();
+  }
 
   const dataByPerson = {};
   const excludedData = [];
