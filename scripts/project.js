@@ -74,21 +74,32 @@ function project_createResponseSheets() {
   }
 
   Logger.log(`(project) 元データ ${data.length}行の処理を開始します。`);
+  
+  // デバッグ: 最初の3行のデータを確認
+  if (data.length > 0) {
+    Logger.log(`(project) デバッグ: 最初の行のデータ`);
+    Logger.log(`  A列(フォルダ名): "${data[0][PROJECT_COL_A_FOLDER_NAME]}" (型: ${typeof data[0][PROJECT_COL_A_FOLDER_NAME]})`);
+    Logger.log(`  B列(ステータス): "${data[0][PROJECT_COL_B_STATUS]}" (型: ${typeof data[0][PROJECT_COL_B_STATUS]})`);
+    Logger.log(`  I列(管理者): "${data[0][PROJECT_COL_I_MANAGER]}" (型: ${typeof data[0][PROJECT_COL_I_MANAGER]})`);
+  }
 
   // --- (project) データをA列（projectフォルダ名）でグループ化 ---
   const dataByFolder = {};
-  data.forEach((row) => {
+  data.forEach((row, rowIndex) => {
     // 空行をスキップ
     if (row.join('').trim().length === 0) return;
     
     const folderName = row[PROJECT_COL_A_FOLDER_NAME];
     if (!folderName || folderName.toString().trim().length === 0) return;
 
-    if (!dataByFolder[folderName]) {
-      dataByFolder[folderName] = [];
+    const folderNameStr = folderName.toString().trim();
+    if (!dataByFolder[folderNameStr]) {
+      dataByFolder[folderNameStr] = [];
     }
-    dataByFolder[folderName].push(row);
+    dataByFolder[folderNameStr].push(row);
   });
+
+  Logger.log(`(project) フォルダ数: ${Object.keys(dataByFolder).length}件`);
 
   // --- (project) 各フォルダごとに確認先を決定 ---
   // 要件: 
@@ -101,8 +112,15 @@ function project_createResponseSheets() {
   for (const folderName in dataByFolder) {
     const rows = dataByFolder[folderName];
     
-    // B列（ステータス）が「在職」の行を探す
-    const activeRows = rows.filter(row => row[PROJECT_COL_B_STATUS] === '在職');
+    // B列（ステータス）が「在職」の行を探す（型変換とtrimを考慮）
+    const activeRows = rows.filter(row => {
+      const status = row[PROJECT_COL_B_STATUS];
+      if (!status) return false;
+      const statusStr = status.toString().trim();
+      return statusStr === '在職';
+    });
+    
+    Logger.log(`(project) フォルダ「${folderName}」: 全行数=${rows.length}, 在職行数=${activeRows.length}`);
     
     let confirmationPerson = PROJECT_UNKNOWN_SHEET_NAME;
     
@@ -110,15 +128,25 @@ function project_createResponseSheets() {
       // 「在職」の行がある場合、その中からI列（管理者）の値を確認先として選ぶ
       // I列が「×」の場合は確認先不明
       // I列が「×」以外の場合は、その値を確認先とする（最初の「在職」行のI列の値を確認先とする）
-      const manager = activeRows[0][PROJECT_COL_I_MANAGER];
-      if (manager && manager.toString().trim() !== '×' && manager.toString().trim().length > 0) {
-        confirmationPerson = manager.toString().trim();
-      } else {
-        confirmationPerson = PROJECT_UNKNOWN_SHEET_NAME;
+      for (let i = 0; i < activeRows.length; i++) {
+        const manager = activeRows[i][PROJECT_COL_I_MANAGER];
+        if (manager) {
+          const managerStr = manager.toString().trim();
+          Logger.log(`(project) フォルダ「${folderName}」: 在職行[${i}]のI列値="${managerStr}"`);
+          if (managerStr !== '×' && managerStr.length > 0) {
+            confirmationPerson = managerStr;
+            Logger.log(`(project) フォルダ「${folderName}」: 確認先を「${confirmationPerson}」に決定`);
+            break;
+          }
+        }
+      }
+      
+      if (confirmationPerson === PROJECT_UNKNOWN_SHEET_NAME) {
+        Logger.log(`(project) フォルダ「${folderName}」: 在職行のI列がすべて「×」または空のため、確認先不明`);
       }
     } else {
       // B列がすべて「在職」以外の場合、確認先不明
-      confirmationPerson = PROJECT_UNKNOWN_SHEET_NAME;
+      Logger.log(`(project) フォルダ「${folderName}」: 在職行がないため、確認先不明`);
     }
     
     folderConfirmationPerson[folderName] = confirmationPerson;
@@ -134,15 +162,22 @@ function project_createResponseSheets() {
     // 他フォルダ管理者の計算：
     // 「（新）project−2」のA列に同一のフォルダ名が記述されており、かつB列が「在職」のケースがあれば、
     // I列の値をすべて「,」で繋げて転記する（確認先として抽出された方の氏名は除外）
-    const activeRows = rows.filter(row => row[PROJECT_COL_B_STATUS] === '在職');
+    const activeRows = rows.filter(row => {
+      const status = row[PROJECT_COL_B_STATUS];
+      if (!status) return false;
+      const statusStr = status.toString().trim();
+      return statusStr === '在職';
+    });
     const otherManagers = [];
     activeRows.forEach(row => {
       const manager = row[PROJECT_COL_I_MANAGER];
-      if (manager && manager.toString().trim() !== '×' && manager.toString().trim().length > 0) {
+      if (manager) {
         const managerStr = manager.toString().trim();
-        // 確認先として抽出された方の氏名は除外
-        if (managerStr !== confirmationPerson && otherManagers.indexOf(managerStr) === -1) {
-          otherManagers.push(managerStr);
+        if (managerStr !== '×' && managerStr.length > 0) {
+          // 確認先として抽出された方の氏名は除外
+          if (managerStr !== confirmationPerson && otherManagers.indexOf(managerStr) === -1) {
+            otherManagers.push(managerStr);
+          }
         }
       }
     });
@@ -175,6 +210,9 @@ function project_createResponseSheets() {
   }
   
   Logger.log(`(project) データ振り分け完了。確認先: ${Object.keys(dataByPerson).length}件`);
+  for (const person in dataByPerson) {
+    Logger.log(`(project) 確認先「${person}」: ${dataByPerson[person].length}件`);
+  }
 
   // --- (project) 回答用シートのヘッダー定義 ---
   const outputHeaders = [
