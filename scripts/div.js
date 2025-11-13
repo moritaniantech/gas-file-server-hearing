@@ -281,7 +281,7 @@ function div_createAndFormatSheet(fileName, headers, dataRows, folder, highlight
     // 各列の内容を確認して、必要に応じて列幅を調整
     for (let col = 1; col <= numCols; col++) {
       const headerValue = headers[col - 1];
-      const headerWidth = headerValue ? headerValue.toString().length * 1.2 : 10;
+      const headerWidth = headerValue ? headerValue.toString().length * 1.5 : 10;
       
       // データ行の最大幅を確認
       let maxDataWidth = 0;
@@ -289,7 +289,7 @@ function div_createAndFormatSheet(fileName, headers, dataRows, folder, highlight
         for (let row = 2; row <= numRows + 1; row++) {
           const cellValue = sheet.getRange(row, col).getValue();
           if (cellValue) {
-            const cellWidth = cellValue.toString().length * 1.1;
+            const cellWidth = cellValue.toString().length * 1.3;
             if (cellWidth > maxDataWidth) {
               maxDataWidth = cellWidth;
             }
@@ -298,7 +298,7 @@ function div_createAndFormatSheet(fileName, headers, dataRows, folder, highlight
       }
       
       // ヘッダーとデータの大きい方に余裕を持たせて設定
-      const finalWidth = Math.max(headerWidth, maxDataWidth, 10) + 2;
+      const finalWidth = Math.max(headerWidth, maxDataWidth, 10) + 5;
       sheet.setColumnWidth(col, Math.min(finalWidth, 300)); // 最大300ピクセル
     }
   } catch (e) {
